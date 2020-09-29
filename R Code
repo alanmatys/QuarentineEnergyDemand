@@ -1,0 +1,144 @@
+##install.packages("fastDummies")
+## Load Libraries
+  library(dplyr)
+  library(tidyverse)
+  library(lubridate)
+  library(janitor)
+#  library(AER)
+#  library(plm)
+#  library(stargazer)
+#  library(foreign)
+  library(ggplot2)
+#  library(plm)
+#  library(lmtest)
+#  library(sandwich)
+  library(readxl)
+  library(fastDummies)
+
+
+  
+## Confirm I am working in the right directory
+  #getwd()
+  setwd("D:/MiM Ingreso/Modulo 3/Business Apps/TP")
+
+## Cargo los Datos desde fuente de excel
+  Demandav1 <- read_excel("Demandav1.xlsx",col_types = c("numeric", "numeric", "numeric", 
+                                                        "text", "text", "text", "text", "text", 
+                                                        "text", "text", "text", "numeric", 
+                                                        "numeric")) %>% 
+                                                         clean_names()
+#Demandav1 %>% mutate(provincia = make_clean_names(provincia)) %>% head(20)
+#vectorcaba <- Demandav1$region == "BUENOS AIRES" 
+view(Demandav1)
+
+  demandadummy <- fastDummies::dummy_cols(Demandav1,select_columns = c("categoria_tarifa","provincia","categoria_demanda"))
+  table(Demandav1$tipo_agente)
+  view(Demandav1)  
+  
+## VEO BALANCE DE CLASES EN COVARIABLES
+demandadummy_test <- demandadummy %>% filter(mes <= 2)
+attach(demandadummy_test)
+view(demandadummy_test)
+
+## OBSERVO BALANCE EN COVARIABLES DUMMY GENERADAS
+## SECTOR DE DEMANDA
+  
+  
+  
+## Defino variable cuarentena
+attach(Demandav1)
+Demandav1$cuarentena <- if_else(Demandav1$mes > 2 & Demandav1$ano == 2020,1,0)
+detach(Demandav1)
+
+## DEFINO EL DISTANCIAMIENTO
+Demandav1$aislamiento <- if_else(Demandav1$ano == 2020 & Demandav1$mes >= 6 & Demandav1$cuarentena == 0 & Demandav1$provincia != "BUENOS AIRES" & Demandav1$provincia != "CHACO" & Demandav1$provincia != "CORDOBA",1,0)
+
+
+############################ PLOTS ##############################################################
+## ANALIZO COMO VIENE LA DEMANDA COMPARADO A OTROS YEAR
+demandaplot <- Demandav1 %>% group_by(mes,ano) %>% filter(!is.na(demanda_m_wh)) %>% summarize(demanda = sum(demanda_m_wh))
+ggplot(demandaplot,aes(x=mes,y=demanda,color=as.factor(ano)))+ylab("Demanda Total [MWh]")+xlab("Mes")+geom_line()+geom_point()+scale_x_continuous(breaks = 1:12)
+demandaplot %>% group_by(ano) %>% summarize(demandaprom = mean(demanda))
+
+
+## ANALIZO DEMANDA POR TIPO DE USUARIO EN LOS DISTINTOS AÑOS
+sectorplot <- Demandav1 %>%  group_by(mes,ano,categoria_tarifa) %>% filter(!is.na(demanda_m_wh)) %>% summarize(demanda = sum(demanda_m_wh))
+ggplot(sectorplot,aes(x=mes,y=demanda,color=as.factor(categoria_tarifa)))+geom_line()+geom_point()+scale_x_continuous(breaks = 1:12)+facet_grid(sectorplot$ano)+labs(color="Year")+ylab("Demanda Total [MWh]")+xlab("Mes")
+sectorplot %>% filter(categoria_tarifa == "Residencial") %>% ggplot(aes(x=mes,y=demanda,color=as.factor(ano)))+ylab("Demanda Total [MWh]")+xlab("Mes")+geom_line()+geom_point()+scale_x_continuous(breaks = 1:12)+ggtitle("Demanda Residencial")+labs(color="Year")
+sectorplot %>% filter(categoria_tarifa == "Comercial") %>% ggplot(aes(x=mes,y=demanda,color=as.factor(ano)))+ylab("Demanda Total [MWh]")+xlab("Mes")+geom_line()+geom_point()+scale_x_continuous(breaks = 1:12)+ggtitle("Demanda Comercial")+labs(color="Year")
+sectorplot %>% filter(categoria_tarifa == "Industrial/Comercial Grande") %>% ggplot(aes(x=mes,y=demanda,color=as.factor(ano)))+ylab("Demanda Total [MWh]")+xlab("Mes")+geom_line()+geom_point()+scale_x_continuous(breaks = 1:12)+ggtitle("Demanda Industrial/Comercial Grande")+labs(color="Year")
+
+view(Demandav1)
+
+
+## CALCULO LOS EFECTOS INCONDICIONALES DE DiD // PREVIO A CUARENTENA > 3 Y POST CUARENTENA HASTA EL MES DE JULIO QUE TENGO DATOS
+## DEMANDA ANTES DE CUARENTENA APROXIMADO A FIN DE FEBRERO
+d2020a <- colMeans(subset(demandaplot, ano == 2020 & mes < 3, select=demanda))
+d2019a <- colMeans(subset(demandaplot, ano == 2019 & mes < 3, select=demanda))
+d2018a <- colMeans(subset(demandaplot, ano == 2018 & mes < 3, select=demanda))
+d2017a <- colMeans(subset(demandaplot, ano == 2017 & mes < 3, select=demanda))
+## DEMANDA EN CUARENTENA APROXIMADO A MARZO A JULIO
+d2020p <- colMeans(subset(demandaplot, ano == 2020 & mes >= 3 & mes <= 7, select=demanda))
+d2019p <- colMeans(subset(demandaplot, ano == 2019 & mes >= 3 & mes <= 7, select=demanda))
+d2018p <- colMeans(subset(demandaplot, ano == 2018 & mes >= 3 & mes <= 7, select=demanda))
+d2017p <- colMeans(subset(demandaplot, ano == 2017 & mes >= 3 & mes <= 7, select=demanda))
+
+## 2020 vs 2019
+(d2020p-d2019p)-(d2020a-d2019a)
+## 2020 vs 2018
+(d2020p-d2018p)-(d2020a-d2018a)
+## 2020 vs 2017
+(d2020p-d2017p)-(d2020a-d2017a)
+
+## HAGO REGRESIONES PARA MEDIR EFECTOS.
+## DEFINO VARIABLE CUARENTENA
+sectorplot$cuarentena <- if_else(sectorplot$mes > 2 & sectorplot$ano == 2020,1,0)
+
+
+### VEO EFECTOS DE CUARENTENA POR SECTOR
+## 2020 VS 2019
+sector20vs19 <- sectorplot %>% filter(mes <= 7 & ano == 2020 |  mes <= 7 & ano == 2019)
+sector20vs19 %>% group_by(mes,ano,categoria_tarifa) %>% summarize(demanda = sum(demanda)) %>% ggplot(aes(x=mes,y=demanda,color=as.factor(categoria_tarifa)))+ylab("Demanda Total [MWh]")+xlab("Mes")+geom_line()+geom_point()+scale_x_continuous(breaks = 1:12)+geom_vline(xintercept = 2)+ggtitle("Demanda 2020 vs 2019")+labs(color = "Categoria")
+datareg1 <- fastDummies::dummy_cols(sector20vs19,select_columns = c("categoria_tarifa"))
+reg1 <- lm(demanda ~ categoria_tarifa_Comercial*cuarentena + `categoria_tarifa_Industrial/Comercial Grande`*cuarentena + categoria_tarifa_Residencial*cuarentena + cuarentena, data = datareg1)
+summary(reg1)
+## 2020 VS 2018
+sector20vs18 <- sectorplot %>% filter(mes <= 7 & ano == 2020 |  mes <= 7 & ano == 2018)
+sector20vs18 %>% group_by(mes,ano,categoria_tarifa) %>% summarize(demanda = sum(demanda)) %>% ggplot(aes(x=mes,y=demanda,color=as.factor(categoria_tarifa)))+ylab("Demanda Total [MWh]")+xlab("Mes")+geom_line()+geom_point()+scale_x_continuous(breaks = 1:12)+geom_vline(xintercept = 2)+ggtitle("Demanda 2020 vs 2018")+labs(color = "Categoria")
+datareg2 <- fastDummies::dummy_cols(sector20vs18,select_columns = c("categoria_tarifa"))
+reg2 <- lm(demanda ~ categoria_tarifa_Comercial*cuarentena + `categoria_tarifa_Industrial/Comercial Grande`*cuarentena + categoria_tarifa_Residencial*cuarentena + cuarentena, data = datareg2)
+summary(reg2)
+## 2020 VS 2017
+sector20vs17 <- sectorplot %>% filter(mes <= 7 & ano == 2020 |  mes <= 7 & ano == 2017)
+sector20vs17 %>% group_by(mes,ano,categoria_tarifa) %>% summarize(demanda = sum(demanda)) %>% ggplot(aes(x=mes,y=demanda,color=as.factor(categoria_tarifa)))+ylab("Demanda Total [MWh]")+xlab("Mes")+geom_line()+geom_point()+scale_x_continuous(breaks = 1:12)+geom_vline(xintercept = 2)+ggtitle("Demanda 2020 vs 2017")+labs(color = "Categoria")
+datareg3 <- fastDummies::dummy_cols(sector20vs17,select_columns = c("categoria_tarifa"))
+reg3 <- lm(demanda ~ categoria_tarifa_Comercial*cuarentena + `categoria_tarifa_Industrial/Comercial Grande`*cuarentena + categoria_tarifa_Residencial*cuarentena + cuarentena, data = datareg3)
+summary(reg3)
+
+
+### VEO EFECTOS DE CUARENTENA POR PROVINCIA
+provinciaplot <- Demandav1 %>%  group_by(mes,ano,provincia) %>% filter(!is.na(demanda_m_wh)) %>% summarize(demanda = sum(demanda_m_wh)) %>% mutate(provincia = make_clean_names(provincia))
+## DEFINO VARIABLE CUARENTENA
+provinciaplot$cuarentena <- if_else(provinciaplot$mes > 2 & provinciaplot$ano == 2020,1,0)
+## 2020 VS 2019
+provincia20vs19 <- provinciaplot %>% filter(mes <= 7 & ano == 2020 |  mes <= 7 & ano == 2019)
+provincia20vs19 %>% filter(provincia != "buenos_aires") %>% group_by(mes,ano,provincia) %>% summarize(demanda = sum(demanda)) %>% ggplot(aes(x=mes,y=demanda,color=as.factor(provincia)))+ylab("Demanda Total [MWh]")+xlab("Mes")+geom_line()+geom_point()+scale_x_continuous(breaks = 1:12)+geom_vline(xintercept = 2)+ggtitle("Demanda 2020 vs 2019")+labs(color = "Provincia")
+datareg1 <- fastDummies::dummy_cols(provincia20vs19,select_columns = c("provincia"))
+reg1 <- lm(demanda ~ cuarentena+provincia_buenos_aires+provincia_catamarca+provincia_chaco+provincia_chubut+provincia_cordoba+provincia_corrientes+provincia_entre_rios+provincia_formosa+provincia_jujuy+provincia_la_pampa+provincia_la_rioja+provincia_mendoza+provincia_neuquen+provincia_rio_negro+provincia_salta+provincia_san_juan+provincia_san_luis+provincia_santa_cruz+provincia_santa_fe+provincia_sgo_del_estero +provincia_tucuman+provincia_buenos_aires*cuarentena+provincia_catamarca*cuarentena+provincia_chaco*cuarentena+provincia_chubut*cuarentena+provincia_cordoba*cuarentena+provincia_corrientes*cuarentena+provincia_entre_rios*cuarentena+provincia_formosa*cuarentena+provincia_jujuy*cuarentena+provincia_la_pampa*cuarentena+provincia_la_rioja*cuarentena+provincia_mendoza*cuarentena+provincia_neuquen*cuarentena+provincia_rio_negro*cuarentena+provincia_salta*cuarentena+provincia_san_juan*cuarentena+provincia_san_luis*cuarentena+provincia_santa_cruz*cuarentena+provincia_santa_fe*cuarentena+provincia_sgo_del_estero*cuarentena+provincia_tucuman*cuarentena, data = datareg1)
+summary(reg1)
+## 2020 VS 2018
+provincia20vs18 <- provinciaplot %>% filter(mes <= 7 & ano == 2020 |  mes <= 7 & ano == 2018)
+provincia20vs18 %>% filter(provincia != "buenos_aires") %>% group_by(mes,ano,provincia) %>% summarize(demanda = sum(demanda)) %>% ggplot(aes(x=mes,y=demanda,color=as.factor(provincia)))+ylab("Demanda Total [MWh]")+xlab("Mes")+geom_line()+geom_point()+scale_x_continuous(breaks = 1:12)+geom_vline(xintercept = 2)+ggtitle("Demanda 2020 vs 2018")+labs(color = "Provincia")
+datareg2 <- fastDummies::dummy_cols(provincia20vs18,select_columns = c("provincia"))
+reg2 <- lm(demanda ~ cuarentena+provincia_buenos_aires+provincia_catamarca+provincia_chaco+provincia_chubut+provincia_cordoba+provincia_corrientes+provincia_entre_rios+provincia_formosa+provincia_jujuy+provincia_la_pampa+provincia_la_rioja+provincia_mendoza+provincia_neuquen+provincia_rio_negro+provincia_salta+provincia_san_juan+provincia_san_luis+provincia_santa_cruz+provincia_santa_fe+provincia_sgo_del_estero +provincia_tucuman+provincia_buenos_aires*cuarentena+provincia_catamarca*cuarentena+provincia_chaco*cuarentena+provincia_chubut*cuarentena+provincia_cordoba*cuarentena+provincia_corrientes*cuarentena+provincia_entre_rios*cuarentena+provincia_formosa*cuarentena+provincia_jujuy*cuarentena+provincia_la_pampa*cuarentena+provincia_la_rioja*cuarentena+provincia_mendoza*cuarentena+provincia_neuquen*cuarentena+provincia_rio_negro*cuarentena+provincia_salta*cuarentena+provincia_san_juan*cuarentena+provincia_san_luis*cuarentena+provincia_santa_cruz*cuarentena+provincia_santa_fe*cuarentena+provincia_sgo_del_estero*cuarentena+provincia_tucuman*cuarentena, data = datareg2)
+summary(reg2)
+## 2020 VS 2017
+provincia20vs17 <- provinciaplot %>% filter(mes <= 7 & ano == 2020 |  mes <= 7 & ano == 2017)
+provincia20vs17 %>% filter(provincia != "buenos_aires") %>% group_by(mes,ano,provincia) %>% summarize(demanda = sum(demanda)) %>% ggplot(aes(x=mes,y=demanda,color=as.factor(provincia)))+ylab("Demanda Total [MWh]")+xlab("Mes")+geom_line()+geom_point()+scale_x_continuous(breaks = 1:12)+geom_vline(xintercept = 2)+ggtitle("Demanda 2020 vs 2017")+labs(color = "Provincia")
+datareg3 <- fastDummies::dummy_cols(provincia20vs17,select_columns = c("provincia"))
+reg3 <- lm(demanda ~ cuarentena+provincia_buenos_aires+provincia_catamarca+provincia_chaco+provincia_chubut+provincia_cordoba+provincia_corrientes+provincia_entre_rios+provincia_formosa+provincia_jujuy+provincia_la_pampa+provincia_la_rioja+provincia_mendoza+provincia_neuquen+provincia_rio_negro+provincia_salta+provincia_san_juan+provincia_san_luis+provincia_santa_cruz+provincia_santa_fe+provincia_sgo_del_estero +provincia_tucuman+provincia_buenos_aires*cuarentena+provincia_catamarca*cuarentena+provincia_chaco*cuarentena+provincia_chubut*cuarentena+provincia_cordoba*cuarentena+provincia_corrientes*cuarentena+provincia_entre_rios*cuarentena+provincia_formosa*cuarentena+provincia_jujuy*cuarentena+provincia_la_pampa*cuarentena+provincia_la_rioja*cuarentena+provincia_mendoza*cuarentena+provincia_neuquen*cuarentena+provincia_rio_negro*cuarentena+provincia_salta*cuarentena+provincia_san_juan*cuarentena+provincia_san_luis*cuarentena+provincia_santa_cruz*cuarentena+provincia_santa_fe*cuarentena+provincia_sgo_del_estero*cuarentena+provincia_tucuman*cuarentena, data = datareg3)
+summary(reg3)
+
+## VEO EFECTOS POR TARIFA CON FOCO
+
+
